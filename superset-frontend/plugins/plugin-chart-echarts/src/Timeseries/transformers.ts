@@ -277,16 +277,67 @@ export function transformSeries(
 
   const isDarkMode = theme ? isThemeDark(theme) : false;
 
-  /**
-   * if timeShiftColor is enabled the colorScaleKey forces the color to be the
-   * same as the original series, otherwise uses separate colors
-   * */
+  /* eslint-disable theme-colors/no-literal-colors */
+  const statusColors: Record<string, string> = {
+    Utilized: '#1769AA',
+    Unutilized: '#2E86DE',
+    Expired: '#A9D0F5',
+  };
+  /* eslint-enable theme-colors/no-literal-colors */
+
+  const seriesStatusColor = statusColors[String(name || '')];
+  const isRewardStatus = Object.prototype.hasOwnProperty.call(
+    statusColors,
+    String(name || ''),
+  );
+
+  let barBorderRadius: number[] = [12, 12, 12, 12];
+
+  if (isRewardStatus) {
+    if (String(name || '') === 'Utilized') {
+      // Bottom segment
+      barBorderRadius = [0, 0, 12, 12];
+    } else if (String(name || '') === 'Expired') {
+      // Top segment
+      barBorderRadius = [12, 12, 0, 0];
+    } else {
+      // Middle segment
+      barBorderRadius = [0, 0, 0, 0];
+    }
+  }
+
   const itemStyle: ItemStyleOption = {
-    color: timeShiftColor
-      ? colorScale(colorScaleKey, sliceId)
-      : colorScale(seriesKey || forecastSeries.name, sliceId),
+    color:
+      seriesType === 'bar' && !isHorizontal
+        ? seriesStatusColor || {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              {
+                offset: 0,
+                // eslint-disable-next-line theme-colors/no-literal-colors
+                color: '#3C7CDC',
+              },
+              {
+                offset: 1,
+                // eslint-disable-next-line theme-colors/no-literal-colors
+                color: '#2E60A7',
+              },
+            ],
+          }
+        : timeShiftColor
+          ? colorScale(colorScaleKey, sliceId)
+          : colorScale(seriesKey || forecastSeries.name, sliceId),
     opacity,
     borderWidth: 0,
+    ...(seriesType === 'bar' && !isHorizontal
+      ? {
+          borderRadius: isRewardStatus ? barBorderRadius : [12, 12, 12, 12],
+        }
+      : {}),
   };
   if (seriesType === 'bar' && connectNulls) {
     itemStyle.borderWidth = 1.5;

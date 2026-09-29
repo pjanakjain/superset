@@ -76,6 +76,7 @@ export const D3_TIME_FORMAT_DOCS = t(
 
 export const D3_TIME_FORMAT_OPTIONS: [string, string][] = [
   [SMART_DATE_ID, t('Adaptive formatting')],
+  ['%-d %b', '%-d %b | 14 Jan'],
   ['%d/%m/%Y', '%d/%m/%Y | 14/01/2019'],
   ['%m/%d/%Y', '%m/%d/%Y | 01/14/2019'],
   ['%d.%m.%Y', '%d.%m.%Y | 14.01.2019'],

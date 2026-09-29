@@ -1,0 +1,40 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.
+ */
+
+import {
+  FilterState,
+  QueryFormData,
+  DataRecord,
+} from '@superset-ui/core';
+import { RefObject } from 'react';
+import type { RefSelectProps } from '@superset-ui/core/components';
+
+import {
+  PluginFilterHooks,
+  PluginFilterStylesProps,
+} from '../types';
+
+export interface PluginFilterNoOfDaysCustomizeProps {
+  defaultValue?: string[] | null;
+}
+
+export type PluginFilterNoOfDaysQueryFormData = QueryFormData &
+  PluginFilterStylesProps &
+  PluginFilterNoOfDaysCustomizeProps;
+
+export type PluginFilterNoOfDaysProps =
+  PluginFilterStylesProps & {
+    data: DataRecord[];
+    filterState: FilterState;
+    formData: PluginFilterNoOfDaysQueryFormData;
+    inputRef: RefObject<RefSelectProps>;
+  } & PluginFilterHooks;
+
+export const DEFAULT_FORM_DATA:
+  PluginFilterNoOfDaysCustomizeProps = {
+  defaultValue: ['90'],
+};

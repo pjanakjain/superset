@@ -1,0 +1,36 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.
+ */
+
+import {
+  Behavior,
+  ChartMetadata,
+  ChartPlugin,
+  t,
+} from '@superset-ui/core';
+
+import buildQuery from './buildQuery';
+import transformProps from './transformProps';
+import thumbnail from './images/thumbnail.png';
+
+export default class NoOfDaysFilterPlugin extends ChartPlugin {
+  constructor() {
+    const metadata = new ChartMetadata({
+      name: t('No of Days'),
+      description: t('Rolling number of days filter'),
+      behaviors: [Behavior.InteractiveChart, Behavior.NativeFilter],
+      tags: [t('Experimental')],
+      thumbnail,
+    });
+
+    super({
+      buildQuery,
+      loadChart: () => import('./NoOfDaysFilterPlugin'),
+      metadata,
+      transformProps,
+    });
+  }
+}

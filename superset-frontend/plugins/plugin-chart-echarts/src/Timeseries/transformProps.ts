@@ -183,7 +183,6 @@ export default function transformProps(
     xAxisBounds,
     xAxisForceCategorical,
     xAxisLabelRotation,
-    xAxisLabelInterval,
     xAxisSort,
     xAxisSortAsc,
     xAxisTimeFormat,
@@ -256,6 +255,31 @@ export default function transformProps(
       xAxisType,
     },
   );
+  // Force reward status stack order:
+  // Utilized -> bottom
+  // Unutilized -> middle
+  // Expired -> top
+  const rewardStatusOrder: Record<string, number> = {
+    Utilized: 0,
+    Unutilized: 1,
+    Expired: 2,
+  };
+
+  const hasRewardStatusSeries = rawSeries.some(series =>
+    Object.prototype.hasOwnProperty.call(
+      rewardStatusOrder,
+      String(series.name || ''),
+    ),
+  );
+
+  if (hasRewardStatusSeries) {
+    rawSeries.sort(
+      (a, b) =>
+        (rewardStatusOrder[String(a.name || '')] ?? 999) -
+        (rewardStatusOrder[String(b.name || '')] ?? 999),
+    );
+  }
+
   const showValueIndexes = extractShowValueIndexes(rawSeries, {
     stack,
     onlyTotal,
@@ -522,19 +546,29 @@ export default function transformProps(
     name: xAxisTitle,
     nameGap: convertInteger(xAxisTitleMargin),
     nameLocation: 'middle',
+
     axisLabel: {
-      hideOverlap: true,
+      hideOverlap: false,
       formatter: xAxisFormatter,
       rotate: xAxisLabelRotation,
-      interval: xAxisLabelInterval,
     },
+
     minorTick: { show: minorTicks },
+
     minInterval:
       xAxisType === AxisType.Time && timeGrainSqla
         ? TIMEGRAIN_TO_TIMESTAMP[
             timeGrainSqla as keyof typeof TIMEGRAIN_TO_TIMESTAMP
           ]
         : 0,
+
+    maxInterval:
+      xAxisType === AxisType.Time && timeGrainSqla
+        ? TIMEGRAIN_TO_TIMESTAMP[
+            timeGrainSqla as keyof typeof TIMEGRAIN_TO_TIMESTAMP
+          ]
+        : undefined,
+
     ...getMinAndMaxFromBounds(
       xAxisType,
       truncateXAxis,

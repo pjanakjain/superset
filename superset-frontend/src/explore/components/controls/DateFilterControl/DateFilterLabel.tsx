@@ -16,49 +16,39 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
+import rison from 'rison';
 import { ReactNode, useState, useEffect, useMemo } from 'react';
+
 import {
   css,
   styled,
   t,
-  useTheme,
   NO_TIME_RANGE,
   SupersetTheme,
   useCSSTextTruncation,
-  fetchTimeRange,
+  SupersetClient,
 } from '@superset-ui/core';
+
 import {
   Button,
   Constants,
   Divider,
   Tooltip,
-  Select,
 } from '@superset-ui/core/components';
+
 import ControlHeader from 'src/explore/components/ControlHeader';
 import { Icons } from '@superset-ui/core/components/Icons';
 import { useDebouncedEffect } from 'src/explore/exploreUtils';
 import { noOp } from 'src/utils/common';
+
 import ControlPopover from '../ControlPopover/ControlPopover';
 
-import { DateFilterControlProps, FrameType } from './types';
-import {
-  DateFilterTestKey,
-  FRAME_OPTIONS,
-  guessFrame,
-  useDefaultTimeFilter,
-} from './utils';
-import {
-  CommonFrame,
-  CalendarFrame,
-  CustomFrame,
-  AdvancedFrame,
-  DateLabel,
-} from './components';
-import { CurrentCalendarFrame } from './components/CurrentCalendarFrame';
+import { DateFilterControlProps } from './types';
 
-const StyledRangeType = styled(Select)`
-  width: 272px;
-`;
+import { DateFilterTestKey, guessFrame, useDefaultTimeFilter } from './utils';
+
+import { DateLabel, SimpleDateRangeFrame } from './components';
 
 const ContentStyleWrapper = styled.div`
   ${({ theme }) => css`
@@ -108,13 +98,21 @@ const IconWrapper = styled.span`
     margin-right: ${({ theme }) => 2 * theme.sizeUnit}px;
     vertical-align: middle;
   }
+
   .text {
     vertical-align: middle;
   }
+
   .error {
     color: ${({ theme }) => theme.colorError};
   }
 `;
+
+const formatDateEndpoint = (dttm: string, isStart = false): string =>
+  dttm.replace('T00:00:00', '') || (isStart ? '-∞' : '∞');
+
+const formatResolvedTimeRange = (since: string, until: string): string =>
+  `${formatDateEndpoint(since, true)} ≤ col < ${formatDateEndpoint(until)}`;
 
 const getTooltipTitle = (
   isLabelTruncated: boolean,
@@ -124,6 +122,7 @@ const getTooltipTitle = (
   isLabelTruncated ? (
     <div>
       {label && <strong>{label}</strong>}
+
       {range && (
         <div
           css={(theme: SupersetTheme) => css`
@@ -138,6 +137,41 @@ const getTooltipTitle = (
     range || null
   );
 
+/**
+ * Resolve a Superset time range using one API request.
+ *
+ * Returns:
+ *
+ * rawRange:
+ *   2025-01-21T00:00:00 : 2025-01-28T00:00:00
+ *
+ * actualRange:
+ *   2025-01-21 ≤ col < 2025-01-28
+ */
+const resolveTimeRange = async (timeRange: string) => {
+  const query = rison.encode_uri(timeRange);
+
+  const response = await SupersetClient.get({
+    endpoint: `/api/v1/time_range/?q=${query}`,
+  });
+
+  const result = response?.json?.result?.[0];
+
+  const since = result?.since || '';
+  const until = result?.until || '';
+
+  if (!since || !until) {
+    throw new Error('Unable to resolve time range');
+  }
+
+  return {
+    since,
+    until,
+    rawRange: `${since} : ${until}`,
+    actualRange: formatResolvedTimeRange(since, until),
+  };
+};
+
 export default function DateFilterLabel(props: DateFilterControlProps) {
   const {
     name,
@@ -146,46 +180,71 @@ export default function DateFilterLabel(props: DateFilterControlProps) {
     onClosePopover = noOp,
     isOverflowingFilterBar = false,
   } = props;
+
   const defaultTimeFilter = useDefaultTimeFilter();
 
   const value = props.value ?? defaultTimeFilter;
+
   const [actualTimeRange, setActualTimeRange] = useState<string>(value);
 
   const [show, setShow] = useState<boolean>(false);
+
   const guessedFrame = useMemo(() => guessFrame(value), [value]);
-  const [frame, setFrame] = useState<FrameType>(guessedFrame);
+
   const [lastFetchedTimeRange, setLastFetchedTimeRange] = useState(value);
+
   const [timeRangeValue, setTimeRangeValue] = useState(value);
+
   const [validTimeRange, setValidTimeRange] = useState<boolean>(false);
-  const [evalResponse, setEvalResponse] = useState<string>(value);
+
+  /**
+   * Canonical absolute range used by
+   * SimpleDateRangeFrame.
+   */
+  const [resolvedTimeRange, setResolvedTimeRange] = useState<string>(value);
+
   const [tooltipTitle, setTooltipTitle] = useState<ReactNode | null>(value);
-  const theme = useTheme();
+
   const [labelRef, labelIsTruncated] = useCSSTextTruncation<HTMLSpanElement>();
 
+  /**
+   * Resolve the current filter value.
+   *
+   * This performs one request and obtains
+   * both the raw range and display range.
+   */
   useEffect(() => {
+    let cancelled = false;
+
     if (value === NO_TIME_RANGE) {
       setActualTimeRange(NO_TIME_RANGE);
+      setResolvedTimeRange(NO_TIME_RANGE);
       setTooltipTitle(null);
       setValidTimeRange(true);
-      return;
+      setLastFetchedTimeRange(NO_TIME_RANGE);
+
+      return () => {
+        cancelled = true;
+      };
     }
-    fetchTimeRange(value).then(({ value: actualRange, error }) => {
-      if (error) {
-        setEvalResponse(error || '');
-        setValidTimeRange(false);
-        setTooltipTitle(value || null);
-      } else {
-        /*
-          HRT == human readable text
-          ADR == actual datetime range
-          +--------------+------+----------+--------+----------+-----------+
-          |              | Last | Previous | Custom | Advanced | No Filter |
-          +--------------+------+----------+--------+----------+-----------+
-          | control pill | HRT  | HRT      | ADR    | ADR      |   HRT     |
-          +--------------+------+----------+--------+----------+-----------+
-          | tooltip      | ADR  | ADR      | HRT    | HRT      |   ADR     |
-          +--------------+------+----------+--------+----------+-----------+
-        */
+
+    resolveTimeRange(value)
+      .then(({ rawRange, actualRange }) => {
+        if (cancelled) {
+          return;
+        }
+
+        /**
+         * Store the absolute range used
+         * by the simplified date picker.
+         */
+        setResolvedTimeRange(rawRange);
+
+        /**
+         * Preserve existing Superset label
+         * behavior for common/calendar/current
+         * filters.
+         */
         if (
           guessedFrame === 'Common' ||
           guessedFrame === 'Calendar' ||
@@ -193,41 +252,61 @@ export default function DateFilterLabel(props: DateFilterControlProps) {
           guessedFrame === 'No filter'
         ) {
           setActualTimeRange(value);
+
           setTooltipTitle(
             getTooltipTitle(labelIsTruncated, value, actualRange),
           );
         } else {
-          setActualTimeRange(actualRange || '');
+          setActualTimeRange(actualRange);
+
           setTooltipTitle(
             getTooltipTitle(labelIsTruncated, actualRange, value),
           );
         }
+
         setValidTimeRange(true);
-      }
-      setLastFetchedTimeRange(value);
-      setEvalResponse(actualRange || value);
-    });
+
+        setLastFetchedTimeRange(value);
+      })
+      .catch(error => {
+        if (cancelled) {
+          return;
+        }
+
+        setValidTimeRange(false);
+
+        setTooltipTitle(value || null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [guessedFrame, labelIsTruncated, labelRef, value]);
 
+  /**
+   * Validate a changed date range after
+   * the existing Superset debounce period.
+   */
   useDebouncedEffect(
     () => {
       if (timeRangeValue === NO_TIME_RANGE) {
-        setEvalResponse(NO_TIME_RANGE);
         setLastFetchedTimeRange(NO_TIME_RANGE);
+
         setValidTimeRange(true);
+
         return;
       }
+
       if (lastFetchedTimeRange !== timeRangeValue) {
-        fetchTimeRange(timeRangeValue).then(({ value: actualRange, error }) => {
-          if (error) {
-            setEvalResponse(error || '');
-            setValidTimeRange(false);
-          } else {
-            setEvalResponse(actualRange || '');
+        resolveTimeRange(timeRangeValue)
+          .then(() => {
             setValidTimeRange(true);
-          }
-          setLastFetchedTimeRange(timeRangeValue);
-        });
+
+            setLastFetchedTimeRange(timeRangeValue);
+          })
+          .catch(() => {
+            setValidTimeRange(false);
+          });
       }
     },
     Constants.SLOW_DEBOUNCE,
@@ -236,21 +315,48 @@ export default function DateFilterLabel(props: DateFilterControlProps) {
 
   function onSave() {
     onChange(timeRangeValue);
+
     setShow(false);
+
     onClosePopover();
   }
 
   function onOpen() {
-    setTimeRangeValue(value);
-    setFrame(guessedFrame);
+    /**
+     * Open the picker using the resolved
+     * absolute date range.
+     */
+    setTimeRangeValue(resolvedTimeRange);
+
+    /**
+     * The resolved range has already been
+     * validated by the initial request.
+     *
+     * This prevents an unnecessary API
+     * request immediately after opening.
+     */
+    setLastFetchedTimeRange(resolvedTimeRange);
+
+    setValidTimeRange(true);
+
     setShow(true);
+
     onOpenPopover();
   }
 
   function onHide() {
-    setTimeRangeValue(value);
-    setFrame(guessedFrame);
+    /**
+     * Cancel restores the last resolved
+     * absolute range.
+     */
+    setTimeRangeValue(resolvedTimeRange);
+
+    setLastFetchedTimeRange(resolvedTimeRange);
+
+    setValidTimeRange(true);
+
     setShow(false);
+
     onClosePopover();
   }
 
@@ -262,62 +368,15 @@ export default function DateFilterLabel(props: DateFilterControlProps) {
     }
   };
 
-  function onChangeFrame(value: FrameType) {
-    if (value === NO_TIME_RANGE) {
-      setTimeRangeValue(NO_TIME_RANGE);
-    }
-    setFrame(value);
-  }
-
   const overlayContent = (
     <ContentStyleWrapper>
-      <div className="control-label">{t('Range type')}</div>
-      <StyledRangeType
-        ariaLabel={t('Range type')}
-        options={FRAME_OPTIONS}
-        value={frame}
-        onChange={onChangeFrame}
+      <SimpleDateRangeFrame
+        value={resolvedTimeRange}
+        onChange={setTimeRangeValue}
       />
-      {frame !== 'No filter' && <Divider />}
-      {frame === 'Common' && (
-        <CommonFrame value={timeRangeValue} onChange={setTimeRangeValue} />
-      )}
-      {frame === 'Calendar' && (
-        <CalendarFrame value={timeRangeValue} onChange={setTimeRangeValue} />
-      )}
-      {frame === 'Current' && (
-        <CurrentCalendarFrame
-          value={timeRangeValue}
-          onChange={setTimeRangeValue}
-        />
-      )}
-      {frame === 'Advanced' && (
-        <AdvancedFrame value={timeRangeValue} onChange={setTimeRangeValue} />
-      )}
-      {frame === 'Custom' && (
-        <CustomFrame
-          value={timeRangeValue}
-          onChange={setTimeRangeValue}
-          isOverflowingFilterBar={isOverflowingFilterBar}
-        />
-      )}
-      {frame === 'No filter' && <div data-test={DateFilterTestKey.NoFilter} />}
+
       <Divider />
-      <div>
-        <div className="section-title">{t('Actual time range')}</div>
-        {validTimeRange && (
-          <div>
-            {evalResponse === 'No filter' ? t('No filter') : evalResponse}
-          </div>
-        )}
-        {!validTimeRange && (
-          <IconWrapper className="warning">
-            <Icons.ExclamationCircleOutlined iconColor={theme.colorError} />
-            <span className="text error">{evalResponse}</span>
-          </IconWrapper>
-        )}
-      </div>
-      <Divider />
+
       <div className="footer">
         <Button
           buttonStyle="secondary"
@@ -328,6 +387,7 @@ export default function DateFilterLabel(props: DateFilterControlProps) {
         >
           {t('CANCEL')}
         </Button>
+
         <Button
           buttonStyle="primary"
           cta
@@ -351,13 +411,16 @@ export default function DateFilterLabel(props: DateFilterControlProps) {
       title={
         <IconWrapper>
           <Icons.EditOutlined />
+
           <span className="text">{t('Edit time range')}</span>
         </IconWrapper>
       }
       defaultOpen={show}
       open={show}
       onOpenChange={toggleOverlay}
-      overlayStyle={{ width: '600px' }}
+      overlayStyle={{
+        width: '600px',
+      }}
       destroyTooltipOnHide
       getPopupContainer={nodeTrigger =>
         isOverflowingFilterBar
